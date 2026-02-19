@@ -1,76 +1,73 @@
-from BeautifulSoup import BeautifulSoup
-import urllib2
-#import sched, time
+"""
+Engro Fertilizers Stock Price Scraper → MySQL
+Python 3.10+ / Windows 11. No CSV output.
+"""
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
 
-myfile = open("ENGRO", "a")
+import requests
+from bs4 import BeautifulSoup
 
-#s = sched.scheduler(time.time, time.sleep)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-#print "Oil Price In $/barrel:"
+URL = "https://www.investing.com/equities/engro-fertilizers-ltd"
+SYMBOL = "ENGRO"
 
-def bring_index():
-    timestmp = str(datetime.now())
-    hours = timestmp.split(" ")
-    #hours1 = hours[1][:2]
-    # print hours
-    # print hours1
-    d1 = datetime.strptime(timestmp, "%Y-%m-%d %H:%M:%S.%f")
-    # d2 = datetime.strptime("2015-08-10 19:31:28.209", "%Y-%m-%d %H:%M:%S.%f")
-    # d2 = datetime.strptime(hours[0] +" "+ hours1 +":15:00.000", "%Y-%m-%d %H:%M:%S.%f")
-    d2 = datetime.strptime(hours[0] + " 00:15:00.000", "%Y-%m-%d %H:%M:%S.%f")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://www.google.com/",
+}
 
-    corrected_time = d1 - d2
-    corrected_time = str(corrected_time)
-    print corrected_time
-    url = "https://www.investing.com/equities/engro-fertilizers-ltd"
-    opener = urllib2.build_opener()
-    opener.addheaders = [('User-agent', 'Mozilla/5.0')]
-    data = opener.open(url).read()
+SCRAPE_INTERVAL = 60
 
-    soup = BeautifulSoup(data)
 
-    t = soup.find('span', {'class': 'arial_26 inlineblock pid-950553-last'})
-    #t1 = soup.find('span', {'class': 'arial_20 pid-8849-pc'})
+def get_price():
+    try:
+        r = requests.get(URL, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        el = soup.find(attrs={"data-test": "instrument-price-last"})
+        if el:
+            return el.text.strip()
+        el = soup.find("span", class_=lambda c: c and "instrument-price" in c)
+        if el:
+            return el.text.strip()
+        print(f"[{SYMBOL}] WARNING: Price element not found.")
+        return None
+    except requests.RequestException as e:
+        print(f"[{SYMBOL}] ERROR: {e}")
+        return None
 
-    print t.text
-    global value
-    if t.text != value:
-        value = t.text
-        myfile.write(corrected_time + "\n")
-        myfile.write(t.text + "\n")
-        print "added"
-    else:
-        print "Not added"
+
+def save_price(price_str):
+    try:
+        price = float(price_str.replace(",", ""))
+    except ValueError:
+        return
+    config.execute(
+        "INSERT INTO stock_prices (symbol, price, scraped_at, source_url) VALUES (%s, %s, %s, %s)",
+        (SYMBOL, price, datetime.now(), URL),
+    )
+
+
+def scrape_loop():
+    print(f"[{SYMBOL}] Scraper started. Writing to MySQL `stock_prices`.")
+    last_price = None
+    while True:
+        price = get_price()
+        if price and price != last_price:
+            save_price(price)
+            print(f"[{SYMBOL}] {datetime.now():%Y-%m-%d %H:%M:%S} | {price} → saved")
+            last_price = price
+        elif price:
+            print(f"[{SYMBOL}] {datetime.now():%Y-%m-%d %H:%M:%S} | {price} (unchanged)")
+        time.sleep(SCRAPE_INTERVAL)
+
 
 if __name__ == "__main__":
-    timestmp = str(datetime.now())
-    hours = timestmp.split(" ")
-    d1 = datetime.strptime(timestmp, "%Y-%m-%d %H:%M:%S.%f")
-    d2 = datetime.strptime(hours[0] + " 00:15:00.000", "%Y-%m-%d %H:%M:%S.%f")
-
-    corrected_time = d1 - d2
-    corrected_time = str(corrected_time)
-    print corrected_time
-    # pkg = "com.mavdev.focusoutfacebook"
-    url = "https://www.investing.com/equities/engro-fertilizers-ltd"
-    opener = urllib2.build_opener()
-    opener.addheaders = [('User-agent', 'Mozilla/5.0')]
-    data = opener.open(url).read()
-
-    soup = BeautifulSoup(data)
-
-    t = soup.find('span', {'class': 'arial_26 inlineblock pid-950553-last'})
-    # t1 = soup.find('span', {'class': 'arial_20 pid-8849-pc'})
-
-    print t.text
-    value = t.text
-    myfile.write(corrected_time + "\n")
-    myfile.write(t.text + "\n")
-    print "Scrapped\n"
-
-    while(1):
-        bring_index()
-
-#s.enter(0, 1, bring_index, (s,))
-#s.run()
+    scrape_loop()

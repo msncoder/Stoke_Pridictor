@@ -1,476 +1,215 @@
-import pandas as pd
+"""
+Daily Technical Indicators → MySQL `indicators` table
+Reads historical_prices from MySQL, calculates MACD + daily indicators,
+writes to `indicators` table.
+
+Python 3.10+ / Windows 11. No CSV I/O.
+"""
+import sys
+import math
 from datetime import datetime
-import csv
-from statistics import mean
-def csv_writer(path,header,data):  #this function is to write the moving avg value vs date values to csv files
-    with open(path, "wb") as out_file:
-        writer = csv.writer(out_file, delimiter=',')
-        writer.writerow(header)
-        for x in data:
-            writer.writerow(x)
-import ftplib
-
-
-
-def moving_avg(close_list1,date_list1,period):
-    moving_close_list=[] #list of moving avg
-    moving_date_list=[]
-    moving_time_list=[]#list of dates corresponding to moving avg
-    # cs= chuck size no of days for moving average
-
-    i=0
-    j=period
-    #here moving avg is calculated and sotred in list
-    for x in range(0,len(close_list1)-period):
-        moving_close_list.append(round(sum(close_list1[i:j])/period,2))
-        moving_date_list.append(date_list1[j])
-
-
-
-        i+=1
-        j+=1
-    if moving_close_list[-1]<close_list1[-1]:
-        effect='BUY'
-    else:
-        effect='SELL    '
-    return['MA'+str(period),moving_close_list[-1],effect]
-def exp_mov_avg1(close_list1,date_list1,period):
-    exp_close_list = []
-    exp_date_list = []
-    exp_time_list=[]
-    # cs= chuck size no of days for moving average
-
-    EMA = sum(close_list1[0:period]) / period
-
-    # taking timeperiod =10
-    multiplier = float(2) / (period + 1)
-
-    for x in range(period, len(close_list1)):
-        exp_close_list.append(round(EMA,2))
-        exp_date_list.append(date_list1[x - 1])
-
-
-        EMA = (close_list1[x] - EMA) * multiplier + EMA
-
-    # print close_list
-    # print date_list
-    #
-    # print exp_date_list
-    # print exp_close_li
-    if exp_close_list[-1]<close_list1[-1]:
-        effect='BUY'
-    else:
-        effect='SELL'
-
-    return ['EMA' + str(period), exp_close_list[-1],effect]
-
-
-def rsi(close_list1,date_list1,sname):
-    gain = []
-    loss = []
-    rsi_list = []
-    rsi_date_list = []
-    list_effect=[]
-    for x in range(0, 14):
-        change = close_list1[x + 1] - close_list1[x]
-        if change > 0:
-            gain.append(change)
-        elif change < 0:
-            loss.append(abs(change))
-
-    avg_gain = sum(gain) / 14
-    avg_loss = sum(loss) / 14
-    RS = avg_gain / avg_loss
-    RSI = 100 - (100 / (1 + RS))
-
-
-    for x in range(14, len(close_list1)):
-        if  RSI>=70:
-            list_effect.append('BUY')
-        elif RSI<=30:
-            list_effect.append('SELL')
-        else:
-            list_effect.append('NEUTRAL')
-        rsi_list.append(round(RSI,2))
-        rsi_date_list.append(date_list1[x])
-        change = close_list1[x] - close_list1[x - 1]
-        if change > 0:
-            avg_gain = (avg_gain * 13 + change) / 14
-            avg_loss = (avg_loss * 13 + 0) / 14
-        elif change < 0:
-            avg_gain = (avg_gain * 13 + 0) / 14
-            avg_loss = (avg_loss * 13 + abs(change)) / 14
-        RS = avg_gain / avg_loss
-        RSI = 100 - (100 / (1 + RS))
-    return [[rsi_list,rsi_date_list],['RSI',rsi_list[-1],list_effect[-1]]]
-def stoch(close_list1,date_list1):
-    i = 0
-    j = 14
-    stoch_date_list=[]
-    stoch_time_list=[]
-    stoch_list=[]
-    stoch_effect_list=[]
-
-    for x in range(13, len(close_list1)):
-        lowest_low = min(close_list1[i:j])
-        highest_high = max(close_list1[i:j])
-        if (highest_high - lowest_low == 0):
-            i+=1
-            j+=1
-            continue
-        else:
-            stoch = (close_list1[x] - lowest_low) / (highest_high - lowest_low) * 100
-            stoch_list.append(abs(round(stoch, 2)))
-            if stoch<=45:
-                stoch_effect_list.append('SELL')
-            elif stoch>=55:
-                stoch_effect_list.append('BUY')
-
-            else:
-                stoch_effect_list.append('NEUTRAL')
-
-
-        stoch_date_list.append(date_list1[x])
-
-        i += 1
-        j += 1
-    return ['STOCH',stoch_list[-1],stoch_effect_list[-1]]
-def macd(close_list1,date_list1,sname):
-    close_list1_12=close_list1[14:len(close_list1)]
-
-    ema_12,m=exp_mov_avg(close_list1_12,date_list1,12,sname)
-
-    ema_26,date_list_macd=exp_mov_avg(close_list1,date_list1,26,sname)
-
-    effect_list=[]
-
-
-    macdline=[a-b for a,b in zip(ema_12,ema_26)]
-    macdline=[round(x,2) for x in macdline]
-
-
-    for y in range(0,len(macdline)):
-        if macdline[y]<0:
-            effect_list.append('SELL')
-        elif macdline[y]>0:
-            effect_list.append('BUY')
-        else:
-            effect_list.append('NEUTRAL')
-
-    return ['MACD',macdline[-1],effect_list[-1]]
-def exp_mov_avg(close_list1,date_list1,period,sname):
-    exp_close_list = []
-    exp_date_list = []
-
-
-    EMA = sum(close_list1[0:period]) / period
-    # taking timeperiod =10
-    multiplier = float(2) / (period + 1)
-
-    for x in range(period, len(close_list1)):
-        exp_close_list.append(EMA)
-        exp_date_list.append(date_list1[x - 1])
-
-
-        EMA = (close_list1[x] - EMA) * multiplier + EMA
-
-    return exp_close_list,exp_date_list
-def stoch_rsi(close_list1, date_list1, sname):
-    i = 0
-    j = 14
-    stoch_date_list = []
-    stoch_time_list = []
-    stoch_list = []
-    stoch_effect_list = []
-
-    for x in range(13, len(close_list1)):
-        lowest_low = min(close_list1[i:j])
-        highest_high = max(close_list1[i:j])
-        if (highest_high - lowest_low == 0):
-            i += 1
-            j += 1
-            continue
-        else:
-            stoch = (close_list1[x] - lowest_low) / (highest_high - lowest_low) * 100
-            stoch_list.append(abs(round(stoch, 2)))
-            if stoch <= 45:
-                stoch_effect_list.append('SELL')
-            elif stoch >= 55:
-                stoch_effect_list.append('BUY')
-
-            else:
-                stoch_effect_list.append('NEUTRAL')
-
-        stoch_date_list.append(date_list1[x])
-
-        i += 1
-        j += 1
-    return ['STOCHRSI', stoch_list[-1], stoch_effect_list[-1]]
-def williams(close_list,date_list,high_list,low_list,sname):
-    i = 0
-    j = 14
-    william_date_list = []
-    william_price_list = []
-    william_effect_list=[]
-    for x in range(13, len(close_list)):
-        hh = max(high_list[i:j])
-        ll = min(low_list[i:j])
-        if hh-ll==0:
-            i+=1
-            j+=1
-            continue
-        else:
-            r = ((hh - close_list[x]) / (hh - ll)) * (-100)
-            william_price_list.append(round(r,2))
-            if -20<=r<=0 :
-                william_effect_list.append('BUY')
-            else:
-                william_effect_list.append('SELL')
-
-        i += 1
-        j += 1
-        william_date_list.append(date_list[x])
-
-    return ['WILLIAM %R',william_price_list[-1],william_effect_list[-1]]
-def cci(close_list1,date_list1,high_list1,low_list1,sname):
-    tp_price_list = []
-    cci_effect_list=[]
-    for x in range(0, len(close_list1)):
-        tp_price_list.append(round((close_list1[x] + high_list1[x] + low_list1[x]) / 3,2))
-    i = 0
-    j = 20
-
-    cci_list = []
-    cci_date_list = []
-    for x in range(19, len(tp_price_list)):
-        m = mean(tp_price_list[i:j])
-
-        md = mean([abs(m - y) for y in tp_price_list[i:j]])
-        if 0.15*md==0:
-            i+=1
-            j+=1
-            continue
-
-        cci = (tp_price_list[x] - mean(tp_price_list[i:j])) / (0.15 * md)
-        cci_list.append(round(cci,2))
-        cci_date_list.append(date_list1[x])
-        if cci<0:
-            cci_effect_list.append('SELL')
-        elif cci>0:
-            cci_effect_list.append('BUY')
-        i+=1
-        j+=1
-
-    return ['CCI',cci_list[-1],cci_effect_list[-1]]
-
-def roc(close_list1,date_list1):
-    roc_date_list = []
-    roc_list = []
-    roc_effect_list=[]
-    for x in range(12, len(close_list1)):
-        close_n_ago = close_list1[x - 12]
-        roc = (close_list1[x] - close_n_ago) / close_n_ago * 100
-        roc_date_list.append(date_list1[x])
-        roc_list.append(round(roc,2))
-        if roc<0:
-            roc_effect_list.append('SELL')
-        elif roc>0:
-            roc_effect_list.append('BUY')
-
-    return ['ROC',roc_list[-1],roc_effect_list[-1]]
-def uo(close_list1,date_list1,high_list1,low_list1,sname):
-    bp_list = []
-    tr_list = []
-    avg7_date_list=[]
-    avg14_date_list=[]
-    avg28_date_list=[]
-    c1=0
-    c2=0
-    c3=0
-    for x in range(1, len(close_list1)):
-        bp_list.append(close_list1[x] - min(low_list1[x], close_list1[x - 1]))
-        tr_list.append( max(high_list1[x], close_list1[x - 1]) - min(low_list1[x], close_list1[x - 1]))
-    i = 0
-    j = 7
-
-    avg7_list = []
-
-
-
-
-    for x in range(7, len(bp_list)):
-        if sum(tr_list[i:j])==0:
-            i+=1
-            j+=1
-            c1+=1
-            continue
-        else:
-            avg7_list.append(sum(bp_list[i:j]) / sum(tr_list[i:j]))
-
-        avg7_date_list.append(date_list1[x])
-        i += 1
-        j += 1
-
-
-
-    i = 0
-    j = 14
-    avg14_list = []
-
-    for x in range(14, len(bp_list)):
-
-        if sum(tr_list[i:j])==0:
-            i+=1
-            j+=1
-            c2+=1
-
-            continue
-        else:
-            avg14_date_list.append(date_list1[x])
-            avg14_list.append(sum(bp_list[i:j]) / sum(tr_list[i:j]))
-        i += 1
-        j += 1
-
-    i = 0
-    j = 28
-    avg28_list = []
-
-    for x in range(28, len(bp_list)):
-        if sum(tr_list[i:j])==0:
-            i+=1
-            j+=1
-            c3+=1
-            continue
-        else:
-            avg28_list.append(sum(bp_list[i:j]) / sum(tr_list[i:j]))
-        avg28_date_list.append(date_list1[x])
-        i += 1
-        j += 1
-
-
-    i=0
-    j=0
-    k=0
-    uo_list=[]
-    uo_effect_list=[]
-
-    avg7_list=avg7_list[0:3092]
-    avg14_list=avg14_list[0:3092]
-
-    for x in range(0,len(avg28_list)):
-        uol=100*((4 * avg7_list[i])+(2 * avg14_list[j])+ avg28_list[k])/7
-        uo_list.append(uol)
-        if uol<50:
-            uo_effect_list.append('sell')
-        elif uol>50:
-            uo_effect_list.append('buy')
-
-        i+=1
-        j+=1
-        k+=1
-
-
-    return ['uo',uo_list[-1],uo_effect_list[-1]]
-def file_upload(lpath,x,y):
-    session = ftplib.FTP('ftp.mystocks.pk', 'mystocks', 'wnyc(%C7o,b_')
-    file = open(lpath, 'rb')
-    session.cwd("/public_html/data/" + x)
-    session.storbinary('STOR ' + x +y+ '.csv', file)  # send the file
-    file.close()  # close file and FTP
-    session.quit()
-    print "Done"
-
-
-
-
-
-s_name=['UBL','PSO','HBL','ENGRO','OGDC']
-for x in s_name:
-    df = pd.DataFrame(pd.read_csv("/home/hduser1/PycharmProjects/spark/data /"+x+"_01012003_09042018.csv"))
-
-    date_list = df.Date.tolist()
-    close_price_list = df.Close.tolist()
-
-    high_list=df.High.tolist()
-    low_list=df.Low.tolist()
-    result_rsi = rsi(close_price_list, date_list, '')
-
-    rsi_list1 = result_rsi[0]
-    rsi_f = result_rsi[1]
-    stoch_f = stoch(close_price_list, date_list)
-    macd_f = macd(close_price_list, date_list, ' ')
-    stochrsi_f = stoch_rsi(rsi_list1[0], rsi_list1[1], ' ')
-    william_f = williams(close_price_list, date_list, high_list, low_list, ' ')
-    roc_f = roc(close_price_list, date_list)
-    cci_f = cci(close_price_list, date_list, high_list, low_list, ' ')
-    # uo_f = uo(close_price_list, date_list, high_list, low_list, ' ')
-
-    mov_5=moving_avg(close_price_list,date_list,5)
-    mov_10 = moving_avg(close_price_list, date_list, 10)
-    mov_20 = moving_avg(close_price_list, date_list, 20)
-    mov_30 = moving_avg(close_price_list, date_list, 30)
-    emov_5 = exp_mov_avg1(close_price_list, date_list, 5)
-    emov_10 = exp_mov_avg1(close_price_list, date_list, 10)
-    emov_20 = exp_mov_avg1(close_price_list, date_list, 20)
-    emov_30 = exp_mov_avg1(close_price_list, date_list, 30)
-    csv_writer(x + '/live/' + x + '_daily.csv', ['INDICATOR', 'VALUE', 'EFFECT'], [rsi_f, stoch_f,macd_f,stochrsi_f,william_f,roc_f,cci_f])
-    csv_writer(x + '/live/' + x + '_moving_avg.csv', ['INDICATOR', 'VALUE', 'EFFECT'], [mov_5, mov_10, mov_20, mov_30])
-    csv_writer(x + '/live/' + x + '_exp_moving_avg.csv', ['INDICATOR', 'VALUE', 'EFFECT'],
-               [emov_5, emov_10, emov_20, emov_30])
-
-    file_upload('/home/hduser1/PycharmProjects/spark/indicators code/' + x + '/live/' + x + '_exp_moving_avg.csv', x,
-                '_exp_moving_avg')
-    file_upload(
-        '/home/hduser1/PycharmProjects/spark/indicators code/' + x + '/live/' + x + '_moving_avg.csv', x, '_moving_avg')
-    file_upload(
-        '/home/hduser1/PycharmProjects/spark/indicators code/' + x + '/live/' + x + '_daily.csv', x, '_daily')
-# for x in s_name:
-#     file_upload('/home/hduser1/PycharmProjects/spark/indicators code/'+x+'/live/'+x+'_exp_moving_avg.csv',x,'_exp_moving_avg')
-#     file_upload(
-#         '/home/hduser1/PycharmProjects/spark/indicators code/' + x + '/live/' +x+ '_moving_avg.csv',x,'_moving_avg')
-#
-#
-#     csv_writer(x+'/live/'+x+'_moving_avg.csv',['INDICATOR','VALUE','EFFECT'],[mov_5,mov_10,mov_20,mov_30])
-#     csv_writer(x+'/live/'+x+ '_exp_moving_avg.csv', ['INDICATOR', 'VALUE', 'EFFECT'], [emov_5, emov_10, emov_20, emov_30])
-
-
-
-# final_effect=[rsi_f[2],stoch_f[2],macd_f[2],stochrsi_f[2],william_f[2],roc_f[2],cci_f[2],uo_f[2]]
-# effect=''
-# sell_count=final_effect.count('sell')
-# buy_count=final_effect.count('buy')
-# if sell_count>5:
-#     effect='strong sell'
-# elif sell_count==5:
-#     effect='sell'
-#
-# elif buy_count>5:
-#     effect='strong buy'
-# elif buy_count==50:
-#     effect='buy'
-# else:
-#     effect='neutral'
-# current_close=close_price_list[-1]
-# if effect=='strong sell':
-#     predicted_value=current_close-current_close*.03
-# elif effect=='sell':
-#     predicted_value=current_close-current_close*.01
-# elif effect=='strong buy':
-#     predicted_value=current_close+current_close*.03
-# elif effect=='buy':
-#     predicted_value=current_close+current_close*.01
-# else:
-#     predicted_value=current_close
-# print 'yesterday close',current_close
-# print 'today predicted value',predicted_value
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
+
+STOCKS = ["UBL", "PSO", "HBL", "ENGRO", "OGDC"]
+
+
+def load_stock(symbol):
+    rows = config.fetchall(
+        "SELECT trade_date, close_price, high_price, low_price "
+        "FROM historical_prices WHERE symbol=%s ORDER BY trade_date ASC",
+        (symbol,),
+    )
+    if not rows:
+        print(f"[daily_indicators] No data for {symbol} in MySQL.")
+    return rows
+
+
+def save_indicators(rows):
+    if not rows:
+        return
+    config.execute(
+        """
+        INSERT INTO indicators (symbol, trade_date, indicator_name, value, signal, period, calculated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE value=VALUES(value), signal=VALUES(signal), calculated_at=VALUES(calculated_at)
+        """,
+        rows,
+        many=True,
+    )
+
+
+# ── Indicator implementations ─────────────────────────────────────
+
+def calc_ma(close, dates, symbol, period):
+    now = datetime.now()
+    rows = []
+    for i in range(period - 1, len(close)):
+        avg = sum(close[i - period + 1: i + 1]) / period
+        effect = "BUY" if close[i] > avg else "SELL" if close[i] < avg else "NEUTRAL"
+        rows.append((symbol, dates[i], f"MA_{period}", round(avg, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_ema(close, dates, symbol, period):
+    mult = 2.0 / (period + 1)
+    ema = sum(close[:period]) / period
+    now = datetime.now()
+    rows = []
+    for i in range(period - 1, len(close)):
+        if i > period - 1:
+            ema = (close[i] - ema) * mult + ema
+        effect = "BUY" if close[i] > ema else "SELL" if close[i] < ema else "NEUTRAL"
+        rows.append((symbol, dates[i], f"EMA_{period}", round(ema, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_rsi(close, dates, symbol, period=14):
+    gains  = [max(close[i] - close[i-1], 0) for i in range(1, len(close))]
+    losses = [max(close[i-1] - close[i], 0) for i in range(1, len(close))]
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    now = datetime.now()
+    rows = []
+    for i in range(period, len(close)):
+        idx = i - 1
+        if idx > period - 1:
+            avg_g = (avg_g * (period - 1) + gains[idx]) / period
+            avg_l = (avg_l * (period - 1) + losses[idx]) / period
+        rsi_val = 100 - (100 / (1 + avg_g / avg_l)) if avg_l else 100
+        effect = "BUY" if rsi_val < 30 else "SELL" if rsi_val > 70 else "NEUTRAL"
+        rows.append((symbol, dates[i], "RSI", round(rsi_val, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_stochastic(close, high, low, dates, symbol, period=14):
+    now = datetime.now()
+    rows = []
+    for i in range(period - 1, len(close)):
+        highest = max(high[i - period + 1: i + 1])
+        lowest  = min(low[i - period + 1: i + 1])
+        k = ((close[i] - lowest) / (highest - lowest) * 100) if highest != lowest else 50
+        effect = "BUY" if k < 20 else "SELL" if k > 80 else "NEUTRAL"
+        rows.append((symbol, dates[i], "Stochastic_K", round(k, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_macd(close, dates, symbol, fast=12, slow=26, signal_period=9):
+    """Calculate MACD line, signal line, and histogram."""
+    def ema_series(data, p):
+        mult = 2.0 / (p + 1)
+        first = sum(data[:p]) / p
+        result = [None] * (p - 1) + [first]
+        e = first
+        for i in range(p, len(data)):
+            e = (data[i] - e) * mult + e
+            result.append(e)
+        return result
+
+    ema_fast = ema_series(close, fast)
+    ema_slow = ema_series(close, slow)
+
+    macd_line = []
+    for f, s in zip(ema_fast, ema_slow):
+        macd_line.append(f - s if (f is not None and s is not None) else None)
+
+    valid_macd = [(i, v) for i, v in enumerate(macd_line) if v is not None]
+    now = datetime.now()
+    rows = []
+
+    # MACD line
+    for i, v in valid_macd:
+        effect = "BUY" if v > 0 else "SELL" if v < 0 else "NEUTRAL"
+        rows.append((symbol, dates[i], "MACD", round(v, 6), effect, None, now))
+
+    # Signal line (EMA of MACD values)
+    macd_vals = [v for _, v in valid_macd]
+    macd_dates_idx = [i for i, _ in valid_macd]
+    if len(macd_vals) >= signal_period:
+        mult = 2.0 / (signal_period + 1)
+        sig_ema = sum(macd_vals[:signal_period]) / signal_period
+        for j in range(signal_period - 1, len(macd_vals)):
+            if j > signal_period - 1:
+                sig_ema = (macd_vals[j] - sig_ema) * mult + sig_ema
+            i = macd_dates_idx[j]
+            hist = macd_vals[j] - sig_ema
+            effect = "BUY" if hist > 0 else "SELL" if hist < 0 else "NEUTRAL"
+            rows.append((symbol, dates[i], "MACD_Signal",    round(sig_ema, 6), effect, signal_period, now))
+            rows.append((symbol, dates[i], "MACD_Histogram", round(hist, 6),    effect, signal_period, now))
+
+    save_indicators(rows)
+
+
+def calc_williams(close, high, low, dates, symbol, period=14):
+    now = datetime.now()
+    rows = []
+    for i in range(period - 1, len(close)):
+        highest = max(high[i - period + 1: i + 1])
+        lowest  = min(low[i - period + 1: i + 1])
+        wr = ((highest - close[i]) / (highest - lowest) * -100) if highest != lowest else -50
+        effect = "BUY" if wr < -80 else "SELL" if wr > -20 else "NEUTRAL"
+        rows.append((symbol, dates[i], "Williams_R", round(wr, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_cci(close, high, low, dates, symbol, period=14):
+    tp = [(h + l + c) / 3 for h, l, c in zip(high, low, close)]
+    now = datetime.now()
+    rows = []
+    for i in range(period - 1, len(tp)):
+        w = tp[i - period + 1: i + 1]
+        sma = sum(w) / period
+        md  = sum(abs(v - sma) for v in w) / period
+        val = (tp[i] - sma) / (0.015 * md) if md else 0
+        effect = "BUY" if val < -100 else "SELL" if val > 100 else "NEUTRAL"
+        rows.append((symbol, dates[i], "CCI", round(val, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def calc_roc(close, dates, symbol, period=14):
+    now = datetime.now()
+    rows = []
+    for i in range(period, len(close)):
+        val = ((close[i] - close[i - period]) / close[i - period] * 100) if close[i - period] else 0
+        effect = "BUY" if val > 0 else "SELL" if val < 0 else "NEUTRAL"
+        rows.append((symbol, dates[i], "ROC", round(val, 6), effect, period, now))
+    save_indicators(rows)
+
+
+def process_stock(symbol):
+    print(f"\n{'='*55}")
+    print(f"[daily_indicators] {symbol}")
+    print(f"{'='*55}")
+
+    rows = load_stock(symbol)
+    if not rows:
+        return
+
+    dates = [r["trade_date"] for r in rows]
+    close = [float(r["close_price"]) for r in rows]
+    high  = [float(r["high_price"])  for r in rows]
+    low   = [float(r["low_price"])   for r in rows]
+
+    for p in (5, 10, 14, 20, 30):
+        calc_ma(close, dates, symbol, p)
+        calc_ema(close, dates, symbol, p)
+
+    calc_rsi(close, dates, symbol)
+    calc_stochastic(close, high, low, dates, symbol)
+    calc_macd(close, dates, symbol)
+    calc_williams(close, high, low, dates, symbol)
+    calc_cci(close, high, low, dates, symbol)
+    calc_roc(close, dates, symbol)
+    print(f"[daily_indicators] {symbol} complete!")
+
+
+def main():
+    for symbol in STOCKS:
+        process_stock(symbol)
+    print("\n[daily_indicators] All stocks → MySQL `indicators`")
+
+
+if __name__ == "__main__":
+    main()

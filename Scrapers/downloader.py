@@ -1,353 +1,158 @@
-import urllib2
-import re
-import mysql.connector
-import PyPDF2
-import mysql
-from goose import Goose
-import validators
-from bs4 import BeautifulSoup
+"""
+Document Downloader & Parser → MySQL `documents` table
+Interactively downloads PDFs/web articles, extracts text, stores in MySQL.
+
+Python 3.10+ / Windows 11. No CSV output. FTP removed.
+"""
+import sys
+import io
+from datetime import datetime
+from pathlib import Path
+
 import requests
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-import string
 
-opt = 'a'
-#nltk.download('stopwords')
-#nltk.download('punkt')
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-while(opt != 'q'):
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
-    user_in = raw_input("Enter 1 for reading from file:\nEnter 2 for entering URLs manually:\nEnter 3 for keywords search: "
-                        "\nEnter 4 for crawling articles from a website: ")
-    counter = 0
-
-    if user_in == "1":
-        file_name = raw_input("Enter file name: ")
-        file_name = file_name + ".txt"
-        dict_of_urls = {}
-        file = open(file_name)
-        dict_of_file_names = {}
-        counter2 = 0
-
-        for line in file:
-            line = re.sub('[\n]', '', line)
-            dict_of_urls[counter] = line
-            download_url = dict_of_urls[counter]
-            response = urllib2.urlopen(download_url)
-            dict_of_file_names[counter2] = download_url.rsplit('/', 1)[-1]
-            file = open(dict_of_file_names[counter2], 'wb')
-            file.write(response.read())
-            file.close()
-            print("Completed")
-            #print file_text
-
-            ######## MySQL Connection #########
-            cnx = mysql.connector.connect(user='root', password='root', host='127.0.0.1', database='articles')
-            cursor = cnx.cursor()
-
-            # add_to_db_query = ("INSERT INTO articles table "
-            #                 "(Identifier, Title, Text) "
-            #                 "VALUES (%s(Identifier), %(Title)s, %(Text)s)")
+try:
+    from goose3 import Goose
+    GOOSE_AVAILABLE = True
+except ImportError:
+    GOOSE_AVAILABLE = False
 
 
-            pdfFileObj = open(dict_of_file_names[counter2], 'rb')
-            pdfReader = PyPDF2.PdfFileReader(pdfFileObj)
-            pages = pdfReader.numPages
-            ticker = 0
+def extract_pdf_text(content_bytes):
+    """Extract text from PDF bytes."""
+    if not PDF_AVAILABLE:
+        print("[downloader] PyPDF2 not installed: pip install PyPDF2")
+        return ""
+    try:
+        reader = PyPDF2.PdfReader(io.BytesIO(content_bytes))
+        text = []
+        for page in reader.pages:
+            text.append(page.extract_text() or "")
+        return "\n".join(text)
+    except Exception as e:
+        print(f"[downloader] PDF extraction error: {e}")
+        return ""
 
-            file_text = ""
 
-            while (ticker < pages):
-                pageObj = pdfReader.getPage(ticker)
-                file_text += pageObj.extractText()
-                ticker += 1
+def extract_web_text(url):
+    """Extract article text using goose3."""
+    if not GOOSE_AVAILABLE:
+        print("[downloader] goose3 not installed: pip install goose3")
+        return "", ""
+    try:
+        g = Goose()
+        article = g.extract(url=url)
+        return article.title or "", article.cleaned_text or ""
+    except Exception as e:
+        print(f"[downloader] Extraction error: {e}")
+        return "", ""
 
-            #print file_text
 
-            data = (dict_of_file_names[counter2], file_text)
+def save_document(title, body, url, file_type="webpage"):
+    """Store document in MySQL, skip duplicates."""
+    try:
+        config.execute(
+            """
+            INSERT IGNORE INTO documents (title, body, source_url, file_type, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (title[:499], body or None, url[:1023] if url else None, file_type, datetime.now()),
+        )
+        print(f"[downloader] Saved to MySQL: {title[:60]!r}")
+    except Exception as e:
+        print(f"[downloader] DB error: {e}")
 
-            cursor.execute("SELECT Title, COUNT(*) FROM articles_table WHERE Title = %s GROUP BY Title",(dict_of_file_names[counter2],))
-            #query =
-            msg = cursor.fetchone()
-            # check if it is empty and print error
-            if not msg:
-                print 'It does not exist'
-                cursor.execute("insert into articles_table (Title, Text) values(%s,%s)", (data))
-                # cursor.execute(add_to_db_query, data)
-                cnx.commit()
-                cursor.close()
-                cnx.close()
 
-                print "Added in database"
+def download_url(url):
+    """Download a URL and determine if it's PDF or HTML."""
+    print(f"[downloader] Fetching: {url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+    }
 
-                counter += 1
-                counter2 += 1
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
+        content_type = r.headers.get("Content-Type", "")
 
-                file.close()
-            else:
-                print "Already present in database!"
-
-        counter = 0
-        option = raw_input("\nPress q to quit or any other to restart program: ")
-        print "\n"
-        if option == 'q':
-            exit()
-
-    if user_in == "2":
-        download_url = raw_input("Enter complete URL: ")
-        response = urllib2.urlopen(download_url)
-        title = download_url.rsplit('/', 1)[-1]
-        file = open(title, 'wb')
-        file.write(response.read())
-        file.close()
-        print("Completed")
-
-        cnx = mysql.connector.connect(user='root', password='root', host='127.0.0.1', database='articles')
-        cursor = cnx.cursor()
-
-        pdfFileObj = open(title, 'rb')
-        pdfReader = PyPDF2.PdfFileReader(pdfFileObj)
-        pages = pdfReader.numPages
-        ticker = 0
-
-        file_text = ""
-
-        while (ticker < pages):
-            pageObj = pdfReader.getPage(ticker)
-            file_text += pageObj.extractText()
-            ticker += 1
-
-        #print file_text
-
-        data = (title, file_text)
-
-        cursor.execute("SELECT Title, COUNT(*) FROM articles_table WHERE Title = %s GROUP BY Title",
-                       (title,))
-        # query =
-        msg = cursor.fetchone()
-        # check if it is empty and print error
-        if not msg:
-            cursor.execute("insert into articles_table (Title, Text) values(%s,%s)", (data))
-            # cursor.execute(add_to_db_query, data)
-            cnx.commit()
-            cursor.close()
-            cnx.close()
-            print "Added in database"
+        if "pdf" in content_type or url.lower().endswith(".pdf"):
+            text = extract_pdf_text(r.content)
+            title = url.split("/")[-1] or "PDF Document"
+            save_document(title, text, url, file_type="pdf")
         else:
-            print "Already present in database!"
+            title, text = extract_web_text(url)
+            if not title:
+                title = url
+            save_document(title, text, url, file_type="webpage")
 
-        option = raw_input("\nPress q to quit or any other to restart program: ")
-        print "\n"
-        if option == 'q':
-            exit()
-
-    if user_in == "3":
-
-        # For stock market news
-
-        # list_of_keywords = ["shares", "share", "stocks", "stock", "prices", "price",
-        #                     "volume", "trade", "traded", "KSE", "KSE100", "points",
-        #                     "market", "pts"]
-
-        list_of_keywords = ["share", "stocks",
-                            "volume", "trade","kse","points",
-                            "market", "pts"]
+    except requests.RequestException as e:
+        print(f"[downloader] Request error: {e}")
 
 
-                            #keywords = raw_input("Enter Keyword(s): ")
+def search_articles(keyword):
+    """Full-text search articles in MySQL."""
+    print(f"\n[downloader] Searching articles for: {keyword!r}")
+    try:
+        rows = config.fetchall(
+            """
+            SELECT id, title, source, created_at
+            FROM articles
+            WHERE MATCH(title, body) AGAINST(%s IN BOOLEAN MODE)
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (keyword,),
+        )
+        if not rows:
+            print("[downloader] No results found.")
+        else:
+            for row in rows:
+                print(f"  [{row['created_at']}] [{row['source']}] {row['title'][:80]}")
+        return rows
+    except Exception as e:
+        print(f"[downloader] Search error: {e}")
+        return []
 
-        temp = ""
 
-        #list_of_keywords[0] = "+" + list_of_keywords[0]
+def interactive_mode():
+    """Interactive CLI for downloading and searching."""
+    print("=" * 60)
+    print("SMAP-FYP Document Downloader → MySQL")
+    print("=" * 60)
+    print("Commands: download <url> | search <keyword> | quit")
 
-        another_list = []
-        for words in list_of_keywords:
-            another_list.append("+" + words)
+    while True:
+        try:
+            cmd = input("\n> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[downloader] Exiting.")
+            break
+
+        if not cmd:
+            continue
+
+        parts = cmd.split(None, 1)
+        action = parts[0].lower()
+
+        if action in ("quit", "exit", "q"):
+            break
+        elif action == "download" and len(parts) == 2:
+            download_url(parts[1].strip())
+        elif action == "search" and len(parts) == 2:
+            search_articles(parts[1].strip())
+        else:
+            print("Usage: download <url> | search <keyword> | quit")
 
 
-        print another_list
-
-        keywords = ""
-
-        for words in another_list:
-            keywords = keywords + words
-            keywords = keywords + " "
-
-        print keywords
-
-        # keywords = "+" + keywords
-        # keywords = keywords.replace(" ", " +")
-
-        print "\n"
-
-        cnx = mysql.connector.connect(user='root', password='root', host='localhost', database='articles')
-        cursor = cnx.cursor()
-
-        cursor.execute("alter table articles_table ENGINE = MYISAM")
-
-        cursor.execute("alter table articles_table add FULLTEXT(Title, Text)")
-
-        #cursor.execute("SELECT text FROM articles_table")
-        #cursor.execute("insert into articles_table (Title, Text) values(%s,%s)", (data))
-        #back = cursor.execute("SELECT Text FROM articles_table WHERE MATCH(Text) AGAINST ('%s' IN BOOLEAN MODE)", (keywords))
-        #cursor.execute(query, (keywords))
-        # cursor.execute(add_to_db_query, data)
-        #print back
-        #cursor.execute(query, (keywords))
-
-        cursor.execute(
-            "select * from articles_table where match(Title,Text) against ('{}' IN BOOLEAN MODE)".format(keywords))
-        records = cursor.fetchall()
-
-        for row in records:
-            print row[1], row[2]
-
-        cnx.commit()
-        cursor.close()
-        cnx.close()
-
-        option = raw_input("\nPress q to quit or any other to restart program: ")
-        print "\n"
-        if option == 'q':
-            exit()
-
-    if user_in == '4':
-        url = raw_input("Enter a website to crawl articles from: ")
-        nltk.download('stopwords')
-
-        r = requests.get("http://" + url)
-
-        data = r.text
-
-        soup = BeautifulSoup(data, "lxml")
-        dict = {}
-        counter = 0
-
-        for link in soup.find_all('a'):
-            # print(link.get('href'))
-            dict[counter] = link.get('href')
-            counter += 1
-
-        print dict
-
-        print "URLs DICTIONARY"
-        # print urls_dict
-        print "\n\nGoose Beginning from here \n"
-
-        dict_of_validated_urls = {}
-
-        for key, value in dict.iteritems():
-            # print dict[key]
-            check = validators.url(dict[key])
-            # print check
-            if check:
-                dict_of_validated_urls[key] = value
-
-        ####### Pass URL of article here ##########
-
-        print dict_of_validated_urls
-        print len(dict_of_validated_urls)
-
-        keywords = {0: "twitter", 1: "facebook", 2: "fashion", 3: "entertainment",
-                    4: "epaper", 5: "sport", 6: "politics", 7: "images", 8: "obituary", 9: "watch-live", 10: "herald",
-                    11: "supplements",
-                    12: "classifieds", 13: "aurora", 14: "cityfm", 15: "#comments", 16: "expo", 17: "nnews",
-                    18:"latest-news", 19:"category", 20:"videos", 21:"tv-shows", 22:"urdu", 23:"live", 24:"php",
-                    25:"trending", 26:"privacy", 27:"about", 28:"aspx", 29:"faq", 30:"talent", 31:"ratecardon"}
-
-        print "Validation\n"
-
-        for key in dict_of_validated_urls.keys():
-            for values in keywords.values():
-                if values in dict_of_validated_urls[key]:
-                    print dict_of_validated_urls[key]
-                    del dict_of_validated_urls[key]
-                    break
-
-        print len(dict_of_validated_urls)
-
-        print dict_of_validated_urls
-
-        dict_of_articles = {}
-        counter = 0
-
-        for key, value in dict_of_validated_urls.iteritems():
-            dict_of_articles[counter] = value
-            counter += 1
-
-        counter = 0
-        print dict_of_articles
-
-        dict_of_cleaned_urls = {}
-
-        for key, value in dict_of_articles.items():
-            if value not in dict_of_cleaned_urls.values():
-                dict_of_cleaned_urls[key] = value
-
-        print "Clean URLs:"
-        print dict_of_cleaned_urls
-        text = ""
-        filtered_sentence = []
-
-        dict_of_cleaned_articles_and_titles = {}
-
-        for key in dict_of_cleaned_urls.keys():
-            url = dict_of_cleaned_urls[key]
-            g = Goose()
-            article = g.extract(url=url)
-            print article.title
-            #dict_of_cleaned_articles_and_titles[article.title]
-            print "Title printed"
-            print "\n"
-            # print article.meta_description
-            text = article.cleaned_text
-            stop_words = set(stopwords.words('english'))
-
-            word_tokens = word_tokenize(text)
-
-            filtered_sentence = [w for w in word_tokens if not w in stop_words]
-
-            for words in filtered_sentence:
-                filtered_sentence = words.encode('ascii', 'ignore')
-
-            print filtered_sentence
-            print type(filtered_sentence)
-            filtered_sentence = str(filtered_sentence)
-
-            for w in word_tokens:
-                if w not in stop_words:
-                    # filtered_sentence.append(w)
-                    filtered_sentence += " " + w
-
-            print "Filtered:"
-            print filtered_sentence
-            print "Text printed"
-            # print article.top_image.src
-
-            #dict_of_cleaned_articles_and_titles[article.title] = filtered_sentence
-
-            cnx = mysql.connector.connect(user='root', password='root', host='localhost', database='articles')
-            cursor = cnx.cursor()
-
-            data = (article.title, filtered_sentence)
-
-            #data = (title, file_text)
-
-            cursor.execute("SELECT Title, COUNT(*) FROM articles_table WHERE Title = %s GROUP BY Title",
-                           (article.title,))
-            # query =
-            msg = cursor.fetchone()
-            # check if it is empty and print error
-            if not msg:
-                cursor.execute("insert into articles_table (Title, Text) values(%s,%s)", (data))
-                # cursor.execute(add_to_db_query, data)
-                cnx.commit()
-                print "Added to Database"
-
-        cursor.close()
-        cnx.close()
-        option = raw_input("\nPress q to quit or any other to restart program: ")
-        print "\n"
-        if option == 'q':
-            exit()
+if __name__ == "__main__":
+    interactive_mode()

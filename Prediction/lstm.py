@@ -1,320 +1,172 @@
-#from __future__ import absolute_import
-from pandas import DataFrame
-#from keras.utils.np_utils import to_categorical
-from pandas import Series
-from pandas import concat
-from pandas import read_csv
-#from pandas import datetime
-from sklearn.metrics import mean_squared_error
+"""
+LSTM Stock Price Prediction → MySQL `predictions` table
+Reads historical_prices from MySQL, trains LSTM, stores predictions in MySQL.
+
+Python 3.10+ / Windows 11. No CSV I/O. Memcached optional.
+"""
+import sys
+import warnings
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
-from math import sqrt
-#from matplotlib import pyplot
-from numpy import array
-import os
-import glob
-import csv
-from datetime import datetime, timedelta
-import memcache
-import schedule
-import ftplib
-import time
-import pydoop
 
-print datetime.now()
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-def outer():
+warnings.filterwarnings("ignore")
 
-    #print datetime.now()
+try:
+    from keras.models import Sequential
+    from keras.layers import Dense, LSTM
+    KERAS_AVAILABLE = True
+except ImportError:
+    print("[lstm] WARNING: keras/tensorflow not installed. pip install tensorflow keras")
+    KERAS_AVAILABLE = False
 
-    # def parser(x):
-    #     return datetime.strptime('190' + x, '%Y-%m')
-
-    # convert time series into supervised learning problem
-    def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
-        n_vars = 1 if type(data) is list else data.shape[1]
-        df = DataFrame(data)
-        cols, names = list(), list()
-        # input sequence (t-n, ... t-1)
-        for i in range(n_in, 0, -1):
-            cols.append(df.shift(i))
-            names += [('var%d(t-%d)' % (j + 1, i)) for j in range(n_vars)]
-        # forecast sequence (t, t+1, ... t+n)
-        for i in range(0, n_out):
-            cols.append(df.shift(-i))
-            if i == 0:
-                names += [('var%d(t)' % (j + 1)) for j in range(n_vars)]
-            else:
-                names += [('var%d(t+%d)' % (j + 1, i)) for j in range(n_vars)]
-        # put it all together
-        agg = concat(cols, axis=1)
-        agg.columns = names
-        # drop rows with NaN values
-        if dropnan:
-            agg.dropna(inplace=True)
-        return agg
-
-    # create a differenced series
-    def difference(dataset, interval=1):
-        diff = list()
-        for i in range(interval, len(dataset)):
-            value = dataset[i] - dataset[i - interval]
-            diff.append(value)
-        return Series(diff)
-
-    # transform series into train and test sets for supervised learning
-    def prepare_data(series, n_test, n_lag, n_seq):
-        # extract raw values
-        raw_values = series.values
-        # transform data to be stationary
-        diff_series = difference(raw_values, 1)
-        diff_values = diff_series.values
-        diff_values = diff_values.reshape(len(diff_values), 1)
-        # rescale values to -1, 1
-        scaler = MinMaxScaler(feature_range=(-1, 1))
-        scaled_values = scaler.fit_transform(diff_values)
-        scaled_values = scaled_values.reshape(len(scaled_values), 1)
-        # transform into supervised learning problem X, y
-        supervised = series_to_supervised(scaled_values, n_lag, n_seq)
-        supervised_values = supervised.values
-        # split into train and test sets
-        train, test = supervised_values[0:-n_test], supervised_values[-n_test:]
-        return scaler, train, test
-
-    # fit an LSTM network to training data
-    def fit_lstm(train, n_lag, n_seq, n_batch, nb_epoch, n_neurons):
-        # reshape training into [samples, timesteps, features]
-        X, y = train[:, 0:n_lag], train[:, n_lag:]
-        X = X.reshape(X.shape[0], 1, X.shape[1])
-        # design network
-        model = Sequential()
-        model.add(LSTM(n_neurons, batch_input_shape=(n_batch, X.shape[1], X.shape[2]), stateful=True))
-        model.add(Dense(y.shape[1]))
-        model.compile(loss='mean_squared_error', optimizer='adam')
-        # fit network
-        for i in range(nb_epoch):
-            model.fit(X, y, epochs=1, batch_size=n_batch, verbose=0, shuffle=False)
-            model.reset_states()
-        return model
-
-    # make one forecast with an LSTM,
-    def forecast_lstm(model, X, n_batch):
-        # reshape input pattern to [samples, timesteps, features]
-        X = X.reshape(1, 1, len(X))
-        # make forecast
-        forecast = model.predict(X, batch_size=n_batch)
-        # convert to array
-        return [x for x in forecast[0, :]]
-
-    # evaluate the persistence model
-    def make_forecasts(model, n_batch, train, test, n_lag, n_seq):
-        forecasts = list()
-        for i in range(len(test)):
-            X, y = test[i, 0:n_lag], test[i, n_lag:]
-            # make forecast
-            forecast = forecast_lstm(model, X, n_batch)
-            # store the forecast
-            forecasts.append(forecast)
-        return forecasts
-
-    # invert differenced forecast
-    def inverse_difference(last_ob, forecast):
-        # invert first forecast
-        inverted = list()
-        inverted.append(forecast[0] + last_ob)
-        # propagate difference forecast using inverted first value
-        for i in range(1, len(forecast)):
-            inverted.append(forecast[i] + inverted[i - 1])
-        return inverted
-
-    # inverse data transform on forecasts
-    def inverse_transform(series, forecasts, scaler, n_test):
-        inverted = list()
-        for i in range(len(forecasts)):
-            # create array from forecast
-            forecast = array(forecasts[i])
-            forecast = forecast.reshape(1, len(forecast))
-            # invert scaling
-            inv_scale = scaler.inverse_transform(forecast)
-            inv_scale = inv_scale[0, :]
-            # invert differencing
-            index = len(series) - n_test + i - 1
-            last_ob = series.values[index]
-            inv_diff = inverse_difference(last_ob, inv_scale)
-            # store
-            inverted.append(inv_diff)
-        return inverted
-
-    # evaluate the RMSE for each forecast time step
-    def evaluate_forecasts(test, forecasts, n_lag, n_seq):
-        for i in range(n_seq):
-            actual = [row[i] for row in test]
-            predicted = [forecast[i] for forecast in forecasts]
-            rmse = sqrt(mean_squared_error(actual, predicted))
-            print('t+%d RMSE: %f' % ((i + 1), rmse))
-
-    # plot the forecasts in the context of the original dataset
-    # def plot_forecasts(series, forecasts, n_test):
-    #     # plot the entire dataset in blue
-    #     pyplot.plot(series.values)
-    #     # plot the forecasts in red
-    #     for i in range(len(forecasts)):
-    #         off_s = len(series) - n_test + i - 1
-    #         off_e = off_s + len(forecasts[i]) + 1
-    #         xaxis = [x for x in range(off_s, off_e)]
-    #         yaxis = [series.values[off_s]] + forecasts[i]
-    #         pyplot.plot(xaxis, yaxis, color='red')
-        # show the plot
-        #pyplot.show()
-
-    path = '/home/hduser1/Desktop/ml'
-    extension = 'csv'
-    os.chdir(path)
-    result = [i for i in glob.glob('*.{}'.format(extension))]
-    print result
-
-    ####### Timing
-    # date_time = str(datetime.now())
-    # date_time = date_time.split()
-    # no_sec = date_time[1].split(".")
-    nine_hours_from_now = datetime.now() + timedelta(hours=1)
-    '{:%H:%M:%S}'.format(nine_hours_from_now)
-    newtime = format(nine_hours_from_now, '%H:%M:%S')
+STOCKS     = ["UBL", "PSO", "HBL", "ENGRO", "OGDC"]
+EPOCHS     = 10
+BATCH_SIZE = 1
+NEURONS    = 1
+FORECAST   = 3   # days ahead to forecast
 
 
-    #nine_hours_from_now = datetime.now() - timedelta(minutes=3)
-    nine_hours_from_now = datetime.now()
-    '{:%H:%M:%S}'.format(nine_hours_from_now)
-    curr_time_3_min = format(nine_hours_from_now, '%H:%M:%S')
-    curr_time_3_min = curr_time_3_min[:-3]
-    print curr_time_3_min
-    #curr_time = no_sec[0][:-3]
-    #print curr_time
+# ── Data ──────────────────────────────────────────────────────────
 
-    nine_hours_from_now = datetime.now() - timedelta(hours=1)
-    '{:%H:%M:%S}'.format(nine_hours_from_now)
-    one_hour_early = format(nine_hours_from_now, '%H:%M:%S')
-    one_hour_early = one_hour_early[:-3]
-    print one_hour_early
-    #print newtime
-    newtime = newtime[:-3]
-    print newtime
+def load_prices(symbol):
+    rows = config.fetchall(
+        "SELECT trade_date, close_price FROM historical_prices "
+        "WHERE symbol=%s ORDER BY trade_date ASC",
+        (symbol,),
+    )
+    if not rows:
+        print(f"[lstm] No data for {symbol} in MySQL.")
+    return rows
 
-    def norm_factor():
-        csv_file = csv.reader(open(items, "rb"), delimiter=",")
 
-        #temp = ""
-        val = ""
-        val2 = ""
-        for row in csv_file:
-            if one_hour_early in row[1]:
-                list = row[1].split(":")
-                temp = one_hour_early.split(":")
-                # print temp
-                # print temp[0]
-                # print list[0]
-                if temp[0] == list[0]:
-                    # print list
-                    val = row
-                    #print val
-                    # print val
-                    # print val
+# ── Transforms ────────────────────────────────────────────────────
 
-            if curr_time_3_min in row[1]:
-                list = row[1].split(":")
-                temp = curr_time_3_min.split(":")
-                # print temp
-                # print temp[0]
-                # print list[0]
-                if temp[0] == list[0]:
-                    # print list
-                    val2 = row
-                    #print val2
-                    #print val
-                    #print val2
-        normalization_factor = float(val[2]) - float(val2[2])
-        #print normalization_factor
-        # print val
-        # print val2
-        return float(format(normalization_factor, '.2f'))
+def difference(data, interval=1):
+    return [data[i] - data[i - interval] for i in range(interval, len(data))]
 
-    counter = 0
-    # count_file = open("out/counter.txt", "w")
-    #
-    # print "Created Count File"
 
-    for items in result:
-        #print series
+def inv_diff(last, val):
+    return val + last
 
-        series = read_csv(items, header=0, usecols=[2], squeeze=True)
-        # configure
-        n_lag = 1
-        n_seq = 3
-        n_test = 1
-        n_epochs = 10
-        n_batch = 1
-        n_neurons = 1
-        names = items.split(".")
-        # for items in names:
-        #     names = items.upper()
-        # print names
-        # prepare data
-        scaler, train, test = prepare_data(series, n_test, n_lag, n_seq)
-        # fit model
-        model = fit_lstm(train, n_lag, n_seq, n_batch, n_epochs, n_neurons)
-        # # make forecasts
-        forecasts = make_forecasts(model, n_batch, train, test, n_lag, n_seq)
-        # # inverse transform forecasts and test
-        forecasts = inverse_transform(series, forecasts, scaler, n_test + 2)
-        # # forecasts = forecasts[0]
-        # print forecasts
-        actual = [row[n_lag:] for row in test]
-        #actual = inverse_transform(series, actual, scaler, n_test + 2)
-        # # evaluate forecasts
-        # print actual
-        #
-        # #print newtime
-        # #     t = str(datetime.datetime.now())
-        # #     dt = t.split()
-        #
-        #
-        #
-        normalization_factor = norm_factor()
-        pred_file = open("out/" + names[0] + "_predvalonly.txt", "wb")
-        pred_file.write(format(float(forecasts[0][0]), '.2f'))
-        normalized = float(forecasts[0][0]) - normalization_factor / 2
-        normalized = format(normalized, '.2f')
-        with open("out/" + names[0] + "_pred.csv", 'wb') as outcsv:
-            writer = csv.writer(outcsv)
-            writer.writerow(["time", "predicted"])
-            writer.writerow([newtime, normalized])
 
-        time.sleep(2)
+def to_supervised(data, lag=1):
+    result = np.zeros((len(data) - lag, lag + 1))
+    for i in range(len(data) - lag):
+        result[i, :lag] = data[i: i + lag]
+        result[i, lag]  = data[i + lag]
+    return result
 
-        ###### Send to server
-        session = ftplib.FTP('ftp.mystocks.pk', 'mystocks', 'wnyc(%C7o,b_')
-        file2 = open("out/" + names[0] + "_pred.csv", 'rb')
-        session.cwd("/public_html/data/" + names[0])
-        session.storbinary('STOR ' + names[0] + "_pred.csv", file2)
 
-        print normalized
-        print normalization_factor
-        print format(float(forecasts[0][0]), '.2f')
+# ── Model ─────────────────────────────────────────────────────────
 
-        counter += 1
-        #count_file.write(str(counter))
-        shared = memcache.Client(['127.0.0.1:11211'], debug=0)
-        shared.set('Value', str(counter), 10)
+def fit_lstm(train, batch, epochs, neurons):
+    X, y = train[:, :-1], train[:, -1]
+    X = X.reshape(X.shape[0], 1, X.shape[1])
+    model = Sequential([
+        LSTM(neurons, batch_input_shape=(batch, X.shape[1], X.shape[2]), stateful=True),
+        Dense(1),
+    ])
+    model.compile(loss="mean_squared_error", optimizer="adam")
+    for _ in range(epochs):
+        model.fit(X, y, epochs=1, batch_size=batch, verbose=0, shuffle=False)
+        model.reset_states()
+    return model
 
-        #evaluate_forecasts(actual, forecasts, n_lag, n_seq)
-        # plot forecasts
-        #plot_forecasts(series, forecasts, n_test + 2)
-        print datetime.now()
-        print "DONE!\n"
 
-schedule.every(1).minutes.do(outer)
+def forecast_step(model, batch, X):
+    X = X.reshape(1, 1, len(X))
+    return model.predict(X, batch_size=batch, verbose=0)[0, 0]
 
-while True:
-    schedule.run_pending()
+
+# ── Save ──────────────────────────────────────────────────────────
+
+def save_prediction(symbol, predicted_value, target_period, direction="NEUTRAL"):
+    config.execute(
+        """
+        INSERT INTO predictions
+          (symbol, model_type, predicted_at, target_period,
+           predicted_value, direction)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (symbol, "LSTM", datetime.now(), target_period, predicted_value, direction),
+    )
+
+
+# ── Processing ────────────────────────────────────────────────────
+
+def process_stock(symbol):
+    print(f"\n[lstm] ── {symbol} ──────────────────────────────────")
+    rows = load_prices(symbol)
+    if not rows or len(rows) < 50:
+        print(f"[lstm] Skipping {symbol} — need ≥50 data points (have {len(rows)})")
+        return
+
+    raw = [float(r["close_price"]) for r in rows]
+    dates = [r["trade_date"] for r in rows]
+
+    diff_vals = difference(raw, 1)
+    supervised = to_supervised(diff_vals, 1)
+
+    train_size = len(supervised) - 10
+    train, test = supervised[:train_size], supervised[train_size:]
+
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    train_sc = scaler.fit_transform(train)
+    test_sc  = scaler.transform(test)
+
+    print(f"[lstm] Training LSTM ({EPOCHS} epochs, {len(train)} samples)…")
+    model = fit_lstm(train_sc, BATCH_SIZE, EPOCHS, NEURONS)
+
+    # Walk-forward test predictions
+    predictions = []
+    for i in range(len(test_sc)):
+        X = test_sc[i, :-1]
+        yhat  = forecast_step(model, BATCH_SIZE, X)
+        yhat_r = scaler.inverse_transform([[*X, yhat]])[0, -1]
+        real_val = inv_diff(raw[train_size + i], yhat_r)
+
+        predictions.append(real_val)
+        direction = "BUY" if real_val > raw[train_size + i] else "SELL" if real_val < raw[train_size + i] else "NEUTRAL"
+        date_label = str(dates[train_size + i + 1]) if (train_size + i + 1) < len(dates) else "test"
+        save_prediction(symbol, round(real_val, 4), date_label, direction)
+
+    # Future forecast
+    last_X = test_sc[-1, :-1]
+    last_obs = raw[-1]
+    for step in range(1, FORECAST + 1):
+        yhat  = forecast_step(model, BATCH_SIZE, last_X)
+        yhat_r = scaler.inverse_transform([[*last_X, yhat]])[0, -1]
+        future_val = inv_diff(last_obs, yhat_r)
+        direction = "BUY" if future_val > last_obs else "SELL" if future_val < last_obs else "NEUTRAL"
+        save_prediction(symbol, round(future_val, 4), f"future_{step}", direction)
+        last_obs = future_val
+        print(f"[lstm] {symbol} Future+{step}: {future_val:.2f} [{direction}] → MySQL")
+
+    # Update Memcached counter (optional)
+    mc = config.get_memcache_client()
+    if mc:
+        try:
+            mc.set("lstm_counter", (mc.get("lstm_counter") or 0) + 1)
+        except Exception:
+            pass
+
+
+def main():
+    if not KERAS_AVAILABLE:
+        print("[lstm] Cannot run — install TensorFlow: pip install tensorflow keras")
+        return
+
+    print(f"[lstm] Started at {datetime.now()}")
+    for symbol in STOCKS:
+        process_stock(symbol)
+    print(f"\n[lstm] All stocks done. Predictions stored in MySQL `predictions`.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,37 +1,69 @@
-from BeautifulSoup import BeautifulSoup
-import urllib2
-import sched, time
+"""
+USD Dollar Index Scraper → MySQL commodity_prices table
+Python 3.10+ / Windows 11. No CSV output.
+"""
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
 
-myfile = open("usd index", "a")
+import requests
+from bs4 import BeautifulSoup
 
-#with open("test.txt", "a") as myfile:
-#    myfile.write("appended text")
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-timestmp = str(datetime.now())
-#timestmp = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-print timestmp
-myfile.write(timestmp + "\n")
+URL = "https://www.investing.com/quotes/us-dollar-index"
+COMMODITY = "USD_INDEX"
 
-s = sched.scheduler(time.time, time.sleep)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://www.google.com/",
+}
 
-print "$ Index:"
+SCRAPE_INTERVAL = 60
 
-def bring_index(sc):
-    #pkg = "com.mavdev.focusoutfacebook"
-    url = "https://www.investing.com/quotes/us-dollar-index"
-    opener = urllib2.build_opener()
-    opener.addheaders = [('User-agent', 'Mozilla/5.0')]
-    data = opener.open(url).read()
 
-    soup=BeautifulSoup(data)
+def get_price():
+    try:
+        r = requests.get(URL, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        el = soup.find(attrs={"data-test": "instrument-price-last"})
+        if el:
+            return el.text.strip()
+        el = soup.find("span", class_=lambda c: c and "instrument-price" in c)
+        if el:
+            return el.text.strip()
+        print(f"[{COMMODITY}] WARNING: Price element not found.")
+        return None
+    except requests.RequestException as e:
+        print(f"[{COMMODITY}] ERROR: {e}")
+        return None
 
-    t=soup.find('span',{'class':'arial_26 inlineblock pid-8827-last'})
-    #t1 = soup.find('span', {'class': 'arial_20 redFont   pid-8827-pc'})
 
-    print t.text
-    myfile.write(t.text + "\n")
-    s.enter(1, 1, bring_index, (sc,))
+def save_price(price_str):
+    try:
+        price = float(price_str.replace(",", ""))
+    except ValueError:
+        return
+    config.execute(
+        "INSERT INTO commodity_prices (commodity, price, scraped_at) VALUES (%s, %s, %s)",
+        (COMMODITY, price, datetime.now()),
+    )
 
-s.enter(1, 1, bring_index, (s,))
-s.run()
+
+def scrape_loop():
+    print(f"[{COMMODITY}] Scraper started. Writing to MySQL `commodity_prices`.")
+    while True:
+        price = get_price()
+        if price:
+            save_price(price)
+            print(f"[{COMMODITY}] {datetime.now():%Y-%m-%d %H:%M:%S} | {price} → saved")
+        time.sleep(SCRAPE_INTERVAL)
+
+
+if __name__ == "__main__":
+    scrape_loop()

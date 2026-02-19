@@ -1,148 +1,106 @@
-from datetime import datetime, timedelta
-import schedule
-import csv
-import os
-import glob
-import memcache
-import time
-import ftplib
+"""
+Actual vs Predicted Tracker → MySQL
+Fills in `actual_value`, `difference`, and `pct_error` for
+LSTM predictions that have a matching historical price.
 
-flag = 0
+Python 3.10+ / Windows 11. No CSV I/O.
+"""
+import sys
+from datetime import datetime
+from pathlib import Path
 
-#
-outcsv = open("out/UBL_act_pred.csv", 'w')
-writer = csv.writer(outcsv)
-writer.writerow(["time", "actual", "predicted"])
-outcsv.close()
-outcsv1 = open("out/HBL_act_pred.csv", 'w')
-writer = csv.writer(outcsv1)
-writer.writerow(["time", "actual", "predicted"])
-outcsv1.close()
-outcsv2 = open("out/ENGRO_act_pred.csv", 'w')
-writer = csv.writer(outcsv2)
-writer.writerow(["ti+me", "actual", "predicted"])
-outcsv2.close()
-outcsv3 = open("out/PSO_act_pred.csv", 'w')
-writer = csv.writer(outcsv3)
-writer.writerow(["time", "actual", "predicted"])
-outcsv3.close()
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-counter = 0
-#
-
-def outer():
-
-    newtime = str(datetime.now())
-    newtime = newtime.split()
-    newtime = newtime[1]
-    #print newtime
-    time2 = newtime[:-10]
-
-    path = '/home/hduser1/Desktop/ml'
-    extension = 'csv'
-    os.chdir(path)
-    result = [i for i in glob.glob('*.{}'.format(extension))]
-    print result
-
-    shared = memcache.Client(['127.0.0.1:11211'], debug=0)
-    counter = shared.get('Value')
-
-    while(counter != str(len(result))):
-        counter = shared.get('Value')
-
-    time.sleep(5)
-#    
-    file_name = "counter.txt"
-    path = '/home/hduser1/Desktop/ml/out'
-    extension = '.txt'
-    os.chdir(path)
-    result = [i for i in glob.glob('*.{}'.format(extension))]
-    print result
-    
-    while(len(result) != 1):
-        path = '/home/hduser1/Desktop/ml/out'
-        extension = '.txt'
-        os.chdir(path)
-        result = [i for i in glob.glob('*.{}'.format(extension))]
-
-    count_file = open("out/counter.txt","r")
-    line = count_file.readlines()
-    print line
-    
-    while(line[0] != str(len(result))):
-        count_file = open("out/counter.txt", "r")
-        line = count_file.readlines()
- #
-    session = ftplib.FTP('ftp.mystocks.pk', 'mystocks', 'wnyc(%C7o,b_')
-    for items in result:
-        names = items.split(".")
-
-        #read csv, and split on "," the line
-        csv_file = csv.reader(open(names[0] + ".csv", "rb"), delimiter=",")
-        print time2
-        val = ""
-        #loop through csv list
-        for row in csv_file:
-            if time2 in row[1]:
-                list = row[1].split(":")
-                temp = time2.split(":")
-                #print temp
-                if temp[0] == list[0]:
-                #print list
-                    val = row
-                    print val
-                    #print val
-
-        print val
-        #
-        pred_csv = open("out/ubl_singval.csv","r")
-        value = pred_csv.readlines()
-        print value
-        #
-
-        file = open("out/" + names[0] + "_predvalonly.txt", "r")
-        lines = file.readlines()
-        #print lines
-        print lines[0]
-        
-        #
-        with open("out/" + names[0] + "_act_pred.csv", 'a') as outcsv:
-            writer = csv.writer(outcsv)
-            writer.writerow(["time", "actual", "predicted"])
-        #
-
-        with open("out/" + names[0] + "_act_pred.csv", 'a') as outcsv:
-            writer = csv.writer(outcsv)
-            #writer.writerow(["time", "actual", "predicted"])
-            writer.writerow([time2, val[2], lines[0]])
-
-        time.sleep(5)
-        #
-        # file = open("out/" + names[0] +"_act_pred.csv", 'rb')
-        # session.cwd("/public_html/data/" + names[0])
-        # session.storbinary('STOR ' + names[0] + "_act_pred.csv" , file)
-
-        # file2 = open("out/" + names[0] + "_pred.csv", 'rb')
-        # session.cwd("/public_html/data/" + names[0])
-        # session.storbinary('STOR ' + names[0] + "_pred.csv", file2)
-
-        file.close()
-        #file2.close()# send the file
-        print "Done"
-        #
-  # close file and FTP
-    session.quit()
-    #counter += 1
-    print "done"
-    #print counter
-
-schedule.every(1).minutes.do(outer)
-#outer()
-while True:
-    schedule.run_pending()
+STOCKS = ["UBL", "PSO", "HBL", "ENGRO", "OGDC"]
 
 
-# data = [{'time': time, 'actual': val[2], 'predicted':"NULL"}]
-#
-# with open('out/ubl2_predict.json', 'w') as outfile:
-#     json.dump(data, outfile)
+def update_actuals(symbol):
+    """
+    For each unfilled prediction row whose target_period is a date string
+    (not future_*), look up the actual close price and compute accuracy.
+    """
+    pending = config.fetchall(
+        """
+        SELECT p.id, p.target_period, p.predicted_value
+        FROM predictions p
+        WHERE p.symbol = %s
+          AND p.actual_value IS NULL
+          AND p.target_period NOT LIKE 'future_%%'
+        ORDER BY p.predicted_at ASC
+        """,
+        (symbol,),
+    )
+
+    if not pending:
+        print(f"[valupdate] {symbol}: No pending predictions to update.")
+        return
+
+    updated = 0
+    for row in pending:
+        # Try to parse target_period as a date
+        try:
+            target_date = str(row["target_period"])[:10]
+            actual_row = config.fetchone(
+                "SELECT close_price FROM historical_prices WHERE symbol=%s AND trade_date=%s",
+                (symbol, target_date),
+            )
+        except Exception:
+            continue
+
+        if not actual_row:
+            continue
+
+        actual = float(actual_row["close_price"])
+        predicted = float(row["predicted_value"])
+        diff = actual - predicted
+        pct_error = abs(diff / actual * 100) if actual else None
+
+        config.execute(
+            """
+            UPDATE predictions
+            SET actual_value = %s,
+                difference   = %s,
+                pct_error    = %s
+            WHERE id = %s
+            """,
+            (actual, round(diff, 4), round(pct_error, 4) if pct_error is not None else None, row["id"]),
+        )
+        updated += 1
+
+    print(f"[valupdate] {symbol}: Updated {updated}/{len(pending)} predictions with actuals.")
+
+
+def print_summary(symbol):
+    """Print accuracy statistics from predictions table."""
+    stats = config.fetchone(
+        """
+        SELECT
+            COUNT(*)                              AS total_rows,
+            SUM(actual_value IS NOT NULL)         AS filled,
+            AVG(ABS(pct_error))                   AS avg_pct_error,
+            SUM(direction = 'BUY'  AND difference > 0) AS correct_buy,
+            SUM(direction = 'SELL' AND difference < 0) AS correct_sell
+        FROM predictions
+        WHERE symbol = %s
+          AND model_type = 'LSTM'
+          AND actual_value IS NOT NULL
+        """,
+        (symbol,),
+    )
+    if stats and stats["filled"]:
+        print(f"[valupdate] {symbol} summary: filled={stats['filled']} | "
+              f"avg_error={stats['avg_pct_error']:.2f}% | "
+              f"correct_buy={stats['correct_buy']} correct_sell={stats['correct_sell']}")
+
+
+def main():
+    print(f"[valupdate] Started at {datetime.now()}")
+    for symbol in STOCKS:
+        update_actuals(symbol)
+        print_summary(symbol)
+    print(f"[valupdate] Done at {datetime.now()}. Results in MySQL `predictions`.")
+
+
+if __name__ == "__main__":
+    main()

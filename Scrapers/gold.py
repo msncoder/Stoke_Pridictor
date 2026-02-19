@@ -1,62 +1,69 @@
-from BeautifulSoup import BeautifulSoup
-import urllib2
-#import sched, time
+"""
+Gold Price Scraper → MySQL commodity_prices table
+Python 3.10+ / Windows 11. No CSV output.
+"""
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
 
-NoneType = type(None)
-#myfile = open("Gold.csv", "a")
-date = str(datetime.now())
-date = date.split()[0]
+import requests
+from bs4 import BeautifulSoup
 
-#myfile = open("Gold " + date + ".csv", "a")
-myfile = open("Gold 2018-04-06.csv", "a")
-#s = sched.scheduler(time.time, time.sleep)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
-#print "Oil Price In $/barrel:"
+URL = "https://www.investing.com/commodities/gold"
+COMMODITY = "GOLD"
 
-def bring_index():
-    timestmp = str(datetime.now())
-    hours = timestmp.split(" ")
-    #hours1 = hours[1][:2]
-    # print hours
-    # print hours1
-    d1 = datetime.strptime(timestmp, "%Y-%m-%d %H:%M:%S.%f")
-    d2 = datetime.strptime(hours[0] + " 00:15:00.000", "%Y-%m-%d %H:%M:%S.%f")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://www.google.com/",
+}
 
-    corrected_time = d1 - d2
-    corrected_time = str(corrected_time)
-    print corrected_time
-    url = "https://www.investing.com/commodities/gold"
-    opener = urllib2.build_opener()
-    opener.addheaders = [('User-agent', 'Mozilla/5.0')]
-    data = opener.open(url).read()
-
-    soup = BeautifulSoup(data)
-
-    #t=soup.find('span',{'class':'arial_26 inlineblock pid-8849-last'})
-    #t1 = soup.find('span', {'class': 'arial_20 greenFont   pid-8849-pc'})
-
-    t = soup.find('span', {'class': 'arial_26 inlineblock pid-8830-last'})
-    #t1 = soup.find('span', {'class': 'arial_20 pid-8849-pc'})
-
-    if type(t) != NoneType:
-        print t.text
-        myfile.write(corrected_time + "\n")
-        myfile.write(t.text + "\n")
-        # global value
-        # if t.text != value:
-        #     value = t.text
-        #     myfile.write(corrected_time + "\n")
-        #     myfile.write(t.text + "\n")
-        #     print "added"
-        # else:
-        #     print "Not added"
-    else:
-        bring_index()
+SCRAPE_INTERVAL = 60
 
 
-while (1):
-    bring_index()
+def get_price():
+    try:
+        r = requests.get(URL, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        el = soup.find(attrs={"data-test": "instrument-price-last"})
+        if el:
+            return el.text.strip()
+        el = soup.find("span", class_=lambda c: c and "instrument-price" in c)
+        if el:
+            return el.text.strip()
+        print(f"[{COMMODITY}] WARNING: Price element not found.")
+        return None
+    except requests.RequestException as e:
+        print(f"[{COMMODITY}] ERROR: {e}")
+        return None
 
-#s.enter(0, 1, bring_index, (s,))
-#s.run()
+
+def save_price(price_str):
+    try:
+        price = float(price_str.replace(",", ""))
+    except ValueError:
+        return
+    config.execute(
+        "INSERT INTO commodity_prices (commodity, price, scraped_at) VALUES (%s, %s, %s)",
+        (COMMODITY, price, datetime.now()),
+    )
+
+
+def scrape_loop():
+    print(f"[{COMMODITY}] Scraper started. Writing to MySQL `commodity_prices`.")
+    while True:
+        price = get_price()
+        if price:
+            save_price(price)
+            print(f"[{COMMODITY}] {datetime.now():%Y-%m-%d %H:%M:%S} | {price} → saved")
+        time.sleep(SCRAPE_INTERVAL)
+
+
+if __name__ == "__main__":
+    scrape_loop()
