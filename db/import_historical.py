@@ -29,6 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
+import pandas as pd
+
 try:
     import yfinance as yf
     YF_AVAILABLE = True
@@ -74,15 +76,16 @@ def import_from_yahoo(symbol, period="2y"):
         return 0
 
     rows = []
+    df = df.fillna(value=0)  # Replace NaN with 0
     for date, row in df.iterrows():
         rows.append((
             symbol,
             date.date(),
-            float(row["Open"])   if not hasattr(row["Open"], "isna") else None,
-            float(row["High"])   if not hasattr(row["High"], "isna") else None,
-            float(row["Low"])    if not hasattr(row["Low"],  "isna") else None,
-            float(row["Close"]),
-            int(row["Volume"])   if row["Volume"] else None,
+            float(row["Open"].iloc[0]) if row["Open"].iloc[0] else None,
+            float(row["High"].iloc[0]) if row["High"].iloc[0] else None,
+            float(row["Low"].iloc[0]) if row["Low"].iloc[0] else None,
+            float(row["Close"].iloc[0]) if row["Close"].iloc[0] else None,
+            int(row["Volume"].iloc[0]) if row["Volume"].iloc[0] else None,
         ))
 
     if rows:

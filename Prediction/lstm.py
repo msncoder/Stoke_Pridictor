@@ -67,15 +67,13 @@ def to_supervised(data, lag=1):
 
 def fit_lstm(train, batch, epochs, neurons):
     X, y = train[:, :-1], train[:, -1]
-    X = X.reshape(X.shape[0], 1, X.shape[1])
+    X = X.reshape(X.shape[0], X.shape[1], 1)
     model = Sequential([
-        LSTM(neurons, batch_input_shape=(batch, X.shape[1], X.shape[2]), stateful=True),
+        LSTM(neurons, input_shape=(X.shape[1], X.shape[2])),
         Dense(1),
     ])
     model.compile(loss="mean_squared_error", optimizer="adam")
-    for _ in range(epochs):
-        model.fit(X, y, epochs=1, batch_size=batch, verbose=0, shuffle=False)
-        model.reset_states()
+    model.fit(X, y, epochs=epochs, batch_size=batch, verbose=0, shuffle=False)
     return model
 
 

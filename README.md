@@ -18,3 +18,27 @@ News source: Dawn.com, Ksebusiness.com, Ksenational.com, RSS feeds
 
 Prediction done for HBL, UBL, ENGRO FERTILIZER, PSO and OGDCL with 55 to 60% accuracy.
 
+Step to compile this project:
+1. python db/import_historical.py --all
+2. python Scrapers/dawn.py
+3. python Scrapers/newsfeed.py
+4. python Scrapers/hbl.py
+5. python Scrapers/ubl.py
+6. python Scrapers/engro.py
+7. python Scrapers/pso.py
+8. python Scrapers/ogdcl.py
+9. python Scrapers/oil.py
+10. python Scrapers/use_investing.py
+11. python Scrapers/gold.py
+12. python Scrapers/kebusiness.py
+13. python Scrapers/ksenational.py
+python "Technical Analysis/daily_indicators.py"
+python Prediction/lstm.py
+-- View latest predictions
+SELECT * FROM predictions ORDER BY predicted_at DESC LIMIT 10;
+
+-- View calculated indicators
+SELECT * FROM indicators WHERE symbol='HBL' ORDER BY trade_date DESC LIMIT 10;
+
+
+

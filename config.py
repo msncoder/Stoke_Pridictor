@@ -75,10 +75,14 @@ def execute(sql, params=None, fetch=False, many=False):
             cursor.executemany(sql, params or [])
         else:
             cursor.execute(sql, params or ())
-        cnx.commit()
+        
+        # Fetch results BEFORE committing if needed
+        result = None
         if fetch:
-            return cursor.fetchall()
-        return cursor.lastrowid
+            result = cursor.fetchall()
+        
+        cnx.commit()
+        return result if fetch else cursor.lastrowid
     finally:
         cursor.close()
         cnx.close()

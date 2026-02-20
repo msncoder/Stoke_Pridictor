@@ -32,9 +32,9 @@ def save_indicators(rows):
         return
     config.execute(
         """
-        INSERT INTO indicators (symbol, trade_date, indicator_name, value, signal, period, calculated_at)
+        INSERT INTO indicators (`symbol`, `trade_date`, `indicator_name`, `value`, `trade_signal`, `period`, `calculated_at`)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE value=VALUES(value), signal=VALUES(signal), calculated_at=VALUES(calculated_at)
+        ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), `trade_signal`=VALUES(`trade_signal`), `calculated_at`=VALUES(`calculated_at`)
         """,
         rows,
         many=True,
