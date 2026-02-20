@@ -1,13 +1,23 @@
 """
 RSS News Feed Sentiment Analyzer → MySQL `news_sentiment` table
 Fetches Google News RSS, scores each article per stock, stores in MySQL.
+Uses Selenium for reliable article content extraction.
 
 Python 3.10+ / Windows 11. No CSV output.
 """
 import sys
 import re
+import time
 from datetime import datetime
 from pathlib import Path
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
+from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
@@ -95,7 +105,7 @@ def score_text(text):
 def save_sentiment(stock, title, polarity, subjectivity, signal):
     config.execute(
         """
-        INSERT INTO news_sentiment (stock, title, polarity, subjectivity, signal, scored_at)
+        INSERT INTO news_sentiment (stock, title, polarity, subjectivity, trade_signal, scored_at)
         VALUES (%s, %s, %s, %s, %s, %s)
         """,
         (stock, title[:999], polarity, subjectivity, signal, datetime.now()),
@@ -103,36 +113,70 @@ def save_sentiment(stock, title, polarity, subjectivity, signal):
 
 
 def run():
-    if feedparser is None or Goose is None or _LM is None:
-        print("[newsfeed] Cannot run — missing required libraries (feedparser, goose3, pysentiment2).")
+    if feedparser is None or _LM is None:
+        print("[newsfeed] Cannot run — missing required libraries (feedparser, pysentiment2).")
         return
 
     print(f"[newsfeed] Fetching RSS feed → MySQL `news_sentiment`")
     feed = feedparser.parse(RSS_URL)
     print(f"[newsfeed] {len(feed.entries)} articles found")
 
+    # Initialize Selenium driver for reliable content extraction
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+
     saved = 0
-    for entry in feed.entries:
-        title = entry.get("title", "")
-        link  = entry.get("link", "")
-        if not link:
-            continue
+    try:
+        for entry in feed.entries:
+            title = entry.get("title", "")
+            link  = entry.get("link", "")
+            if not link:
+                continue
 
-        try:
-            g = Goose()
-            article = g.extract(url=link)
-            body = article.cleaned_text
-        except Exception:
-            body = title
+            body = ""
+            try:
+                # Use Selenium to fetch article content
+                print(f"[newsfeed] Fetching content from {link[:60]}...")
+                driver.get(link)
+                
+                # Wait for page to load (max 5 seconds)
+                try:
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                except:
+                    pass
+                
+                # Extract text content
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                paragraphs = soup.find_all("p")
+                body = " ".join([p.get_text(strip=True) for p in paragraphs[:10]])  # First 10 paragraphs
+                
+                if not body:
+                    body = title
+                    
+            except Exception as e:
+                print(f"[newsfeed] Failed to fetch {link}: {e}")
+                body = title
+            
+            time.sleep(1)  # Be respectful to servers
 
-        text = clean_text(f"{title} {body}")
-        stocks = classify_stock(text)
+            text = clean_text(f"{title} {body}")
+            stocks = classify_stock(text)
 
-        for stock in stocks:
-            polarity, subjectivity, signal = score_text(text)
-            save_sentiment(stock, title, polarity, subjectivity, signal)
-            print(f"[newsfeed] {stock} | {signal} ({polarity:+.4f}) | {title[:50]!r}")
-            saved += 1
+            for stock in stocks:
+                polarity, subjectivity, signal = score_text(text)
+                save_sentiment(stock, title, polarity, subjectivity, signal)
+                print(f"[newsfeed] {stock} | {signal} ({polarity:+.4f}) | {title[:50]!r}")
+                saved += 1
+
+    finally:
+        driver.quit()
 
     print(f"[newsfeed] Done. {saved} sentiment records saved to MySQL.")
 
