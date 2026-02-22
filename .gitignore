@@ -1,8 +1,13 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
 # Virtual Environments
 venv/
 env/
 ENV/
-.venv
+.venv/
 
 # Python
 __pycache__/
@@ -25,13 +30,35 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.manifest
+*.spec
 
-# IDE
+# Node.js / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDE / Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Project Specific
+Data_Collected/
+Information/
+Prediction/*.csv
+Technical_Analysis/*.csv
+db/*.db

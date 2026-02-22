@@ -1,44 +1,109 @@
-# Stock Market Analyzer & Predictor System (SMAP) - FYP
+# Stock Market Analyzer & Predictor (SMAP) 📈
 
-The project aimed to predict daily closing and hourly stock prices of various stocks listed on the Pakistan Stock Exchange thereby being a source of timely guidance for investors
+SMAP is a comprehensive end-to-end system designed to predict daily closing and hourly stock prices for various stocks on the Pakistan Stock Exchange (PSX). It leverages real-time data scraping, technical indicator analysis, and deep learning (LSTM) to provide timely guidance for investors.
 
-System Features: Live data processing and technical analysis, User profile and stats and Scalable to other stocks
+---
 
-Technologies/language involved: Python, Hadoop, D3.js, MySQL, Ubuntu, TensorFlow
+## 🚀 Key Features
+- **Live Data Pipeline:** Automated scraping from sources like Investing.com and Dawn.com.
+- **Deep Learning Predictions:** Uses Univariate LSTM for hourly price movement forecasting.
+- **Technical Analysis:** Calculates RSI, MA, and other custom indicators for daily trends.
+- **Modern Web Dashboard:** A responsive FastAPI backend and React 19 frontend for visualizing predictions and historical data.
+- **Automated Scheduling:** Background tasks via `apscheduler` to run the full pipeline daily.
 
-For scraping: Goose, BeautifulSoup4
+---
 
-For NLP news analysis: nltk(stemming, lemmatization, stopwords removal etc.) and Pysentiment(Python financial news sentiment library)
+## 🛠️ Tech Stack
+- **Backend:** FastAPI (Python 3.10+), Uvicorn, APScheduler.
+- **Frontend:** React 19, Vite, TailwindCSS, Lucide-React, Recharts.
+- **Database:** MySQL.
+- **Scraping:** Selenium (Chrome), BeautifulSoup4.
+- **Analysis/ML:** TensorFlow (LSTM), NLTK, Pysentiment.
 
-For prediction: Univariate Long-Short Term Memory (LSTM) for hourly predictions and indicators-based own-built algorithm for daily closing price predictions
+---
 
-Data sources: Quandl, investing.com, nccpl and misc websites
+## ⚙️ Setup & Installation
 
-News source: Dawn.com, Ksebusiness.com, Ksenational.com, RSS feeds
+### 1. Prerequisites
+- Python 3.10+
+- Node.js (v18+)
+- MySQL Server
+- Google Chrome (for Selenium)
 
-Prediction done for HBL, UBL, ENGRO FERTILIZER, PSO and OGDCL with 55 to 60% accuracy.
+### 2. Environment Configuration
+Create a `.env` file in the root directory based on `.env_example`:
+```bash
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=smap_db
+```
 
-Step to compile this project:
-1. python db/import_historical.py --all
-2. python Scrapers/dawn.py
-3. python Scrapers/newsfeed.py
-4. python Scrapers/hbl.py
-5. python Scrapers/ubl.py
-6. python Scrapers/engro.py
-7. python Scrapers/pso.py
-8. python Scrapers/ogdcl.py
-9. python Scrapers/oil.py
-10. python Scrapers/use_investing.py
-11. python Scrapers/gold.py
-12. python Scrapers/kebusiness.py
-13. python Scrapers/ksenational.py
-python "Technical Analysis/daily_indicators.py"
-python Prediction/lstm.py
--- View latest predictions
-SELECT * FROM predictions ORDER BY predicted_at DESC LIMIT 10;
+### 3. Backend Setup
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
--- View calculated indicators
-SELECT * FROM indicators WHERE symbol='HBL' ORDER BY trade_date DESC LIMIT 10;
+# Install dependencies
+pip install -r requirements.txt
+```
 
+### 4. Frontend Setup
+```bash
+cd web/frontend
+npm install
+```
 
+---
 
+## 🏃 Running the Application
+
+### Option A: Manual Data Refresh (Pipeline)
+To import historical data or refresh technical indicators manually:
+```bash
+# Import historical data
+python db/import_historical.py --all
+
+# Run all scrapers and update predictions
+python web/backend/pipeline.py
+```
+
+### Option B: Web Application (Production-like)
+Run both backend and frontend to view the dashboard.
+
+**Backend:**
+```bash
+uvicorn web.backend.main:app --reload
+```
+
+**Frontend:**
+```bash
+cd web/frontend
+npm run dev
+```
+
+---
+
+## 📂 Project Structure
+- `web/backend/`: FastAPI application and pipeline logic.
+- `web/frontend/`: React Vite application.
+- `Scrapers/`: Selenium and BS4 scripts for data collection.
+- `Technical_Analysis/`: Scripts for calculating stock indicators.
+- `Prediction/`: LSTM model training and prediction logic.
+- `config.py`: Centralized database and configuration management.
+
+---
+
+## 📊 Stock Coverage
+Current predictions are active for:
+- HBL (Habib Bank Ltd)
+- UBL (United Bank Ltd)
+- ENGRO FERTILIZER
+- PSO (Pakistan State Oil)
+- OGDCL (Oil & Gas Development Company Ltd)
+
+---
+
+## 📜 License
+This project is part of a Final Year Project (FYP). For academic or professional inquiries, please contact the repository owner.
