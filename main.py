@@ -77,4 +77,6 @@ def trigger_pipeline(background_tasks: BackgroundTasks):
     return {"message": "Pipeline triggered in background", "status": "processing"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -27,6 +27,9 @@ SCRAPE_INTERVAL = 60
 def create_driver():
     """Create a Selenium WebDriver instance."""
     options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new") # Required for server
+    options.add_argument("--no-sandbox")   # Required for Linux/Docker
+    options.add_argument("--disable-dev-shm-usage") # Overcomes limited resource issues
     options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
