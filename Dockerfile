@@ -9,8 +9,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     xvfb \
     libxi6 \
-    libgconf-2-4 \
-    default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
 # Add Google Chrome Repository
