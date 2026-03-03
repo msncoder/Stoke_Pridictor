@@ -10,7 +10,8 @@ ENV_PATH = Path(__file__).parent / ".env"
 
 def _load_env():
     if not ENV_PATH.exists():
-        print(f"[config] WARNING: .env not found at {ENV_PATH}")
+        # On cloud platforms (Render, Heroku, etc.) env vars are injected by the
+        # platform — a missing .env file is normal and not an error.
         return
     with open(ENV_PATH, "r", encoding="utf-8") as f:
         for line in f:
