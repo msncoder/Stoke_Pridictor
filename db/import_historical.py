@@ -26,6 +26,11 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from curl_cffi import requests as curl_requests
+except ImportError:
+    curl_requests = None
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
@@ -55,6 +60,11 @@ INSERT_SQL = """
     ON CONFLICT (symbol, trade_date) DO NOTHING
 """
 
+def get_session():
+    """Create a curl_cffi session with chrome110 impersonation."""
+    if curl_requests is None:
+        return None
+    return curl_requests.Session(impersonate="chrome110")
 
 def import_from_yahoo(symbol, period="2y"):
     """Download from Yahoo Finance and insert into PostgreSQL."""
@@ -66,7 +76,8 @@ def import_from_yahoo(symbol, period="2y"):
     print(f"[import] Downloading {symbol} ({ticker}) from Yahoo Finance ({period})…")
 
     try:
-        df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+        session = get_session()
+        df = yf.download(ticker, period=period, auto_adjust=True, progress=False, session=session)
     except Exception as e:
         print(f"[import] Download failed for {symbol}: {e}")
         return 0
