@@ -61,10 +61,17 @@ INSERT_SQL = """
 """
 
 def get_session():
-    """Create a curl_cffi session with chrome110 impersonation."""
+    """Create a curl_cffi session, trying multiple Chrome targets for compatibility."""
     if curl_requests is None:
         return None
-    return curl_requests.Session(impersonate="chrome110")
+    # Try targets from newest to oldest; some Render builds don't support chrome110
+    for target in ("chrome120", "chrome116", "chrome107", "chrome104"):
+        try:
+            session = curl_requests.Session(impersonate=target)
+            return session
+        except Exception:
+            continue
+    return None
 
 def import_from_yahoo(symbol, period="2y"):
     """Download from Yahoo Finance and insert into PostgreSQL."""
@@ -87,17 +94,21 @@ def import_from_yahoo(symbol, period="2y"):
               f"Check if the ticker is correct for PSX.")
         return 0
 
+    # Flatten MultiIndex columns (yfinance ≥0.2 returns MultiIndex like ('Open','UBL.KA'))
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
     rows = []
     df = df.fillna(value=0)  # Replace NaN with 0
     for date, row in df.iterrows():
         rows.append((
             symbol,
             date.date(),
-            float(row["Open"].iloc[0]) if row["Open"].iloc[0] else None,
-            float(row["High"].iloc[0]) if row["High"].iloc[0] else None,
-            float(row["Low"].iloc[0]) if row["Low"].iloc[0] else None,
-            float(row["Close"].iloc[0]) if row["Close"].iloc[0] else None,
-            int(row["Volume"].iloc[0]) if row["Volume"].iloc[0] else None,
+            float(row["Open"])   if row["Open"]   else None,
+            float(row["High"])   if row["High"]   else None,
+            float(row["Low"])    if row["Low"]    else None,
+            float(row["Close"])  if row["Close"]  else None,
+            int(row["Volume"])   if row["Volume"] else None,
         ))
 
     if rows:

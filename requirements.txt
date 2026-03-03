@@ -8,7 +8,7 @@ click
 cloudscraper>=1.2.0
 colorama
 cssselect
-curl_cffi
+curl_cffi>=0.7.0
 feedparser
 flatbuffers
 frozendict
