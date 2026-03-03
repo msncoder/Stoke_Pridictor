@@ -11,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import config
 import pipeline
+from db import import_historical
 
 app = FastAPI(title="SMAP-FYP Stock Prediction API")
 
@@ -75,6 +76,12 @@ def trigger_pipeline(background_tasks: BackgroundTasks):
     """Manually trigger the full pipeline in the background."""
     background_tasks.add_task(pipeline.run_full_pipeline)
     return {"message": "Pipeline triggered in background", "status": "processing"}
+
+@app.post("/api/import-historical")
+def trigger_import_historical(background_tasks: BackgroundTasks):
+    """Manually trigger historical data import in the background."""
+    background_tasks.add_task(import_historical.run_import_all)
+    return {"message": "Historical data import triggered in background", "status": "processing"}
 
 if __name__ == "__main__":
     import os

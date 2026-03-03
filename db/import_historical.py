@@ -131,6 +131,17 @@ def import_from_csv(csv_path, symbol):
     return len(rows)
 
 
+def run_import_all(period="2y"):
+    """Programmatic entry point to import all default stocks."""
+    print(f"[import] Starting bulk import for: {list(YAHOO_MAP.keys())}")
+    total = 0
+    for symbol in YAHOO_MAP:
+        n = import_from_yahoo(symbol, period)
+        total += n
+    print(f"\n[import] Total: {total} rows imported across {len(YAHOO_MAP)} stocks.")
+    return total
+
+
 def main():
     parser = argparse.ArgumentParser(description="Import historical stock data into PostgreSQL")
     parser.add_argument("--csv",    metavar="FILE",   help="Path to a local CSV file")
@@ -146,11 +157,7 @@ def main():
         import_from_csv(args.csv, args.symbol.upper())
 
     elif args.all or not args.csv:
-        total = 0
-        for symbol in YAHOO_MAP:
-            n = import_from_yahoo(symbol, args.period)
-            total += n
-        print(f"\n[import] Total: {total} rows imported across {len(YAHOO_MAP)} stocks.")
+        run_import_all(args.period)
 
     else:
         parser.print_help()
