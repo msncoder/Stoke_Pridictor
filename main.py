@@ -13,12 +13,26 @@ import config
 import pipeline
 from db import import_historical
 
+import os
+
 app = FastAPI(title="SMAP-FYP Stock Prediction API")
 
-# Enable CORS
+# ---------------------------------------------------------------------------
+# CORS – allow_origins=["*"] + allow_credentials=True is rejected by browsers.
+# List every origin explicitly.  Add extra origins via the ALLOWED_ORIGINS
+# environment variable (comma-separated).
+# ---------------------------------------------------------------------------
+_default_origins = [
+    "https://stoke-pridictor-frontend.vercel.app",  # production Vercel frontend
+    "http://localhost:5173",                         # local Vite dev server
+    "http://localhost:3000",                         # alternate local port
+]
+_extra = os.getenv("ALLOWED_ORIGINS", "")
+_origins = _default_origins + [o.strip() for o in _extra.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
