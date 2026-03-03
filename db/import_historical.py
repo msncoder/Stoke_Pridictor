@@ -26,6 +26,8 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
+import requests as std_requests
+
 try:
     from curl_cffi import requests as curl_requests
 except ImportError:
@@ -61,17 +63,39 @@ INSERT_SQL = """
 """
 
 def get_session():
-    """Create a curl_cffi session, trying multiple Chrome targets for compatibility."""
-    if curl_requests is None:
-        return None
-    # Try targets from newest to oldest; some Render builds don't support chrome110
-    for target in ("chrome120", "chrome116", "chrome107", "chrome104"):
-        try:
-            session = curl_requests.Session(impersonate=target)
-            return session
-        except Exception:
-            continue
-    return None
+    """
+    Return a working HTTP session for yfinance.
+    Tries curl_cffi impersonation targets in order, validates each with a real
+    lightweight request, and falls back to a plain requests.Session if none work.
+    """
+    test_url = "https://query1.finance.yahoo.com/v1/test/getcrumb"
+
+    if curl_requests is not None:
+        for target in ("chrome120", "chrome116", "chrome107", "chrome104", "chrome101"):
+            try:
+                session = curl_requests.Session(impersonate=target)
+                # Validate: actually make a request so ImpersonateError fires here, not later
+                session.get(test_url, timeout=8)
+                print(f"[import] curl_cffi session OK with target={target}")
+                return session
+            except Exception:
+                continue
+
+    # Fallback: plain requests.Session with browser-like headers
+    print("[import] curl_cffi impersonation unavailable — using plain requests session")
+    session = std_requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    })
+    return session
+
 
 def import_from_yahoo(symbol, period="2y"):
     """Download from Yahoo Finance and insert into PostgreSQL."""
@@ -82,14 +106,25 @@ def import_from_yahoo(symbol, period="2y"):
     ticker = YAHOO_MAP.get(symbol, f"{symbol}.KA")
     print(f"[import] Downloading {symbol} ({ticker}) from Yahoo Finance ({period})…")
 
-    try:
-        session = get_session()
-        df = yf.download(ticker, period=period, auto_adjust=True, progress=False, session=session)
-    except Exception as e:
-        print(f"[import] Download failed for {symbol}: {e}")
-        return 0
+    # Build a list of sessions to try: validated curl_cffi session first, then None (yfinance default)
+    session = get_session()
+    sessions_to_try = [session, None] if session is not None else [None]
 
-    if df.empty:
+    df = None
+    for sess in sessions_to_try:
+        try:
+            df = yf.download(ticker, period=period, auto_adjust=True, progress=False, session=sess)
+            break  # success
+        except Exception as e:
+            err_str = str(e).lower()
+            if "impersonat" in err_str or "not supported" in err_str:
+                print(f"[import] Session impersonation failed for {symbol}, trying next fallback…")
+                continue
+            # Any other error — log and give up
+            print(f"[import] Download failed for {symbol}: {e}")
+            return 0
+
+    if df is None or df.empty:
         print(f"[import] No data returned for {symbol} ({ticker}). "
               f"Check if the ticker is correct for PSX.")
         return 0
