@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+backend_env/
+venv/
+env/
+.venv/
+
+# Environment secrets – never ship these
+.env
+.env.*
+
+# Version control
+.git/
+.gitignore
+
+# IDE / OS files
+.vscode/
+.idea/
+*.suo
+.DS_Store
+Thumbs.db
+
+# Test / cache artefacts
+.pytest_cache/
+*.log
